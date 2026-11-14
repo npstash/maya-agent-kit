@@ -4,7 +4,7 @@ Templates for the SDD (SW Development Documents) of a project. For the process a
 
 ## Use
 
-Copy the files of `templates/` into `[project]/sdd/`. Put each ADR into `[project]/sdd/adr/ADR-[yyyymmdd]-[topic].md` ([ADR.md](templates/ADR.md)). Select the requirement format of SRS, as [workflow.md](workflow.md) says.
+Copy the files of `templates/` into `[project]/sdd/`. For the service variant, copy only the documents that [workflow.md](workflow.md) lists for it. Put each ADR into `[project]/sdd/adr/ADR-[yyyymmdd]-[topic].md` ([ADR.md](templates/ADR.md)). Select the requirement format of SRS, as [workflow.md](workflow.md) says.
 
 ## Templates
 

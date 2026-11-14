@@ -27,6 +27,28 @@ These documents form a set of SDD (SW Development Documents). Put them into `[pr
 
 When you create `sdd/`, ask the user for the requirement format of SRS: EARS or structured. Write it in the "Requirement format" line of SRS. Use only that format in the project. To change the format, convert all requirements and change the line.
 
+## Variants
+
+The process has two variants.
+
+- Full variant: the default. It uses each document of the table above.
+- Service variant: for a reusable service that more than one project uses, e.g. an STT service or an agent broker.
+
+Use the service variant only when the user asks for it. The service variant uses these documents:
+
+| Document | Service variant |
+| :-: | :-: |
+| PRD.md | Do not create |
+| SRS.md | Do not create |
+| QAS.md | Optional |
+| DESIGN.md | Required |
+| ADL.md | Required |
+| `adr/ADR-[yyyymmdd]-[topic].md` | Optional |
+
+The API defines a service. Write the required behaviour of the service in the "Interfaces" section of DESIGN.md. Do not change the structure of DESIGN.md.
+
+Create an optional document only when the user asks. A project with no PRD.md and no SRS.md in `sdd/` uses the service variant. In the service variant, skip each instruction of this workflow that uses a document that the project does not have.
+
 ## Iteration loop (one increment)
 
 ### 1. Framing

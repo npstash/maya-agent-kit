@@ -1,6 +1,6 @@
 # SDD documentation
 
-The SDD (SW Development Documents) and their process are in
+The SDD (SW Development Documents), their process and the variants of the process are in
 [workflow.md](../tools/sdd-templates/workflow.md).
 
 - Apply the workflow only to a project with an `sdd/` folder.
