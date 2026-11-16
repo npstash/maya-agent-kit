@@ -114,6 +114,8 @@ run.sh set-system SYSTEM [--url U] [--info LINE ...] [--secret KEY=VALUE ...]
 run.sh delete-system SYSTEM
 run.sh rename-system SYSTEM NEW
 run.sh rename-secret SYSTEM OLD NEW
+run.sh copy-system SYSTEM --to-vault NAME    # copy into another vault; see "Copy and move"
+run.sh move-system SYSTEM --to-vault NAME    # copy, then delete in this vault
 run.sh --vault-home DIR ...
 run.sh --vault NAME ...
 ```
@@ -123,9 +125,24 @@ the recipient of this clone: the one `clone.<name>.key` in the vault home.
 
 After `enrol`, `approve-enrol`, `unenrol`, `unenrol-and-rotate-master-key`,
 `rotate-master-key`, `sync`, `set-system`, `delete-system` and `rename-*`, commit and push the
-vault home. `push-enrol` does this for `enrol` and `approve-enrol`.
+vault home. After `copy-system`, commit and push the target vault home. After `move-system`,
+commit and push the two vault homes. `push-enrol` does this for `enrol` and `approve-enrol`.
 
 The Python API has the same names, e.g. `Store.approve_enrol()` and `Store.unenrol()`.
+
+## Copy and move
+
+`copy-system` and `move-system` take the source vault from `--vault` or `--vault-home`. They take
+the target vault from `--to-vault NAME` or `--to-vault-home DIR`.
+
+- The entry keeps its name, url, authority info and secrets. It gets the entry ID of the target vault.
+- The command opens the two vaults before it writes a file. Each vault opens as in "Opening the vault".
+- Without a terminal, the command works only if a clone key opens each vault.
+- In a terminal, the command asks for the master passphrase of each vault that no clone key opens.
+- The command refuses a system that exists in the target vault.
+- The command refuses a system with an edit file in the target vault. `move-system` also refuses one in the source vault.
+- `move-system` writes the target vault first, then deletes the entry in the source vault.
+- Each vault gets a line in `access.log` with its entry ID and the secret names.
 
 ## Enrolment
 

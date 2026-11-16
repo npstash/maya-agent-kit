@@ -163,3 +163,10 @@
 - 20261107-01 Nestor 88a4aad0d998 Remove aliases: alias_of and aliases are unknown fields of an entry
 - 20261113-01 Nestor 24eabfa7ae7b list-systems prints only the names of the systems
 - 20261113-02 Nestor 24eabfa7ae7b get-system prints the name, then labelled lines for the url, the secret names and the authority info; an empty field is -
+- 20261116-01 Nestor 753936b15c50 copy-system copies a system into another vault; move-system copies it, then deletes it in the source vault
+- 20261116-02 Nestor 753936b15c50 copy-system and move-system work without a terminal if a clone key opens each vault; in a terminal, they ask for the master passphrase of each vault that no clone key opens
+- 20261116-03 Opus-5.5 753936b15c50 The target vault of copy-system and move-system comes from --to-vault NAME or --to-vault-home DIR
+- 20261116-04 Opus-5.5 753936b15c50 copy-system and move-system open the two vaults before they write a file
+- 20261116-05 Opus-5.5 753936b15c50 copy-system and move-system refuse a system that exists in the target vault, and a system with an edit file in a vault that they change
+- 20261116-06 Opus-5.5 753936b15c50 move-system writes the target vault first, then deletes the entry in the source vault
+- 20261116-07 Opus-5.5 753936b15c50 copy-system and move-system write an access log line with the entry ID and the secret names into each vault

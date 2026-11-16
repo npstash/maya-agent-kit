@@ -1112,3 +1112,84 @@ def test_push_enrol_refuses_a_detached_head(workspace: tuple[Path, Path, Path]) 
 def test_push_enrol_runs_only_in_a_terminal(capsys: pytest.CaptureFixture[str]) -> None:
     assert cs.main(["push-enrol"]) == 1
     assert "only in a terminal" in capsys.readouterr().err
+
+
+# -- copy-system and move-system ---------------------------------------------------------------
+
+@pytest.fixture
+def other(tmp_path: Path) -> Path:
+    """A second vault with an enrolled clone."""
+    vault = tmp_path / "vault-other"
+    cs.Store(vault, PW).create_vault()
+    cs.Store(vault, PW).enrol("main", None)
+    return vault
+
+
+def test_copy_system_keeps_the_entry_in_both_vaults(two: Path, other: Path) -> None:
+    before = cs.Store(two).get_credential(SYS)
+    cs.Store(two).copy_system(SYS, cs.Store(other))
+    assert cs.Store(other).get_credential(SYS) == before == cs.Store(two).get_credential(SYS)
+    eid = cs.entry_id(cs.Store(other)._load_key(), SYS)
+    assert log_lines(other)[-2][1:6] == ["copy-system", "main", f'"{eid}"', "token", "clone-key:main:plain"]
+
+
+def test_move_system_deletes_the_entry_in_the_source(two: Path, other: Path) -> None:
+    before = cs.Store(two).get_credential("jira")
+    cs.Store(two).move_system("jira", cs.Store(other))
+    assert cs.Store(other).get_credential("jira") == before
+    assert cs.Store(two)._get("jira") is None
+    assert cs.Store(two)._get(SYS) is not None
+    assert log_lines(two)[-1][1] == "move-system"
+
+
+def test_transfer_refuses_conflicts(two: Path, other: Path) -> None:
+    put(other, SYS, token="other")
+    with pytest.raises(cs.CredentialError, match="already exists"):
+        cs.Store(two).move_system(SYS, cs.Store(other))
+    with pytest.raises(cs.CredentialError, match="unknown system"):
+        cs.Store(two).copy_system("nope", cs.Store(other))
+    with pytest.raises(cs.CredentialError, match="same vault"):
+        cs.Store(two).copy_system(SYS, cs.Store(two))
+    cs.Store(two).edit(["jira"])
+    with pytest.raises(cs.CredentialError, match="run sync"):
+        cs.Store(two).move_system("jira", cs.Store(other))
+    assert secrets(other, SYS) == {"token": "other"} and cs.Store(two)._get(SYS) is not None
+    assert cs.Store(other)._get("jira") is None
+
+
+def test_transfer_opens_both_vaults_before_a_write(two: Path, home: Path, tmp_path: Path) -> None:
+    locked = tmp_path / "vault-locked"
+    cs.Store(locked, PW).create_vault()                    # no clone key
+    data = (locked / "vault.json").read_bytes(), (two / "vault.json").read_bytes()
+    with pytest.raises(cs.NoWayToOpen, match="vault-locked"):
+        cs.Store(two).move_system(SYS, cs.Store(locked))
+    assert ((locked / "vault.json").read_bytes(), (two / "vault.json").read_bytes()) == data
+    cs.Store(two).move_system(SYS, cs.Store(locked, PW))   # the passphrase opens it
+    assert secrets(locked, SYS) == {"token": "t"}
+    with pytest.raises(cs.CredentialError, match="no vault"):
+        cs.Store(two).copy_system("jira", cs.Store(tmp_path / "missing"))
+
+
+def test_cli_transfer_without_a_terminal(two: Path, other: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cs.main(["--vault-home", str(two), "copy-system", "jira", "--to-vault-home", str(other)]) == 0
+    assert cs.main(["--vault-home", str(two), "move-system", SYS, "--to-vault-home", str(other)]) == 0
+    assert secrets(other, "jira") == {"password": "p"} and secrets(other, SYS) == {"token": "t"}
+    assert cs.Store(two)._get(SYS) is None and cs.Store(two)._get("jira") is not None
+    with pytest.raises(SystemExit):
+        cs.main(["--vault-home", str(two), "copy-system", "jira"])   # no target
+
+
+def test_cli_transfer_asks_for_each_passphrase_only_in_a_terminal(two: Path, tmp_path: Path,
+                                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    locked = tmp_path / "vault-locked"
+    cs.Store(locked, PW).create_vault()
+    (two / "clone.main.key").rename(tmp_path / "away")       # neither vault opens with a clone key
+    asked: list[str] = []
+    monkeypatch.setattr(getpass, "getpass", recording_getpass(asked))
+    args = ["--vault-home", str(two), "copy-system", SYS, "--to-vault-home", str(locked)]
+    monkeypatch.setattr(cs, "_tty", lambda: False)
+    assert cs.main(args) == 1 and not asked
+    monkeypatch.setattr(cs, "_tty", lambda: True)
+    assert cs.main(args) == 0
+    assert asked == ["Master passphrase of vault-home: ", "Master passphrase of vault-locked: "]
+    assert secrets(locked, SYS) == {"token": "t"}

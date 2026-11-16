@@ -1320,6 +1320,46 @@ class Store:
         self._put(replace(c, name=new))
         self._save()
 
+    def copy_system(self, system: str, target: Store) -> Credential:
+        """Copy a system into the vault `target`. The name, url, authority info and secrets stay.
+
+        Opens both vaults before a file is written. Refuses a system that exists in the target."""
+        return self._transfer(system, target, "copy-system")
+
+    def move_system(self, system: str, target: Store) -> Credential:
+        """Copy a system into the vault `target`, then delete it in this vault."""
+        return self._transfer(system, target, "move-system")
+
+    def _open(self) -> None:
+        """Load the master key and vault.json. The error names the vault home."""
+        try:
+            self._entries()
+            self._load_key()
+        except CredentialError as exc:
+            raise type(exc)(f"{self.home}: {exc}") from exc
+
+    def _transfer(self, system: str, target: Store, event: str) -> Credential:
+        if self.home.resolve() == target.home.resolve():
+            raise CredentialError("the source and the target are the same vault")
+        self._open()
+        target._open()
+        c = self._need(system)
+        if target._get(system) is not None:
+            raise CredentialError(f"system {system!r} already exists in {target.home}")
+        busy = [p for p in (target.edit_path(system), self.edit_path(system) if event == "move-system" else None)
+                if p is not None and p.exists()]
+        if busy:
+            raise CredentialError(f"{', '.join(map(str, busy))} exists: run sync, or delete the file")
+        target._put(c)
+        target._save()
+        eid = self._id(system)
+        if event == "move-system":
+            self._drop(system)
+            self._save()
+        _log(self.home, event, eid, list(c.secrets()), self.method)
+        _log(target.home, event, target._id(system), list(c.secrets()), target.method)
+        return c
+
     def rename_secret(self, system: str, old: str, new: str) -> None:
         """Rename a secret key of a system, keeping the stored value."""
         c = self._need(system)
@@ -1581,6 +1621,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("system")
     p.add_argument("old")
     p.add_argument("new")
+    for cmd, text in (("copy-system", "copy a system into another vault"),
+                      ("move-system", "copy a system into another vault, then delete it in this vault")):
+        p = sub.add_parser(cmd, help=text)
+        p.add_argument("system")
+        to = p.add_mutually_exclusive_group(required=True)
+        to.add_argument("--to-vault-home", metavar="DIR", help="the folder of the target vault")
+        to.add_argument("--to-vault", metavar="NAME", help="the folder name of the target vault, e.g. vault-main")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "create-vault":
@@ -1654,6 +1701,16 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "rename-secret":
             store.rename_secret(a.system, a.old, a.new)
             print("renamed")
+        elif a.cmd in ("copy-system", "move-system"):
+            target = Store(vault_home(a.to_vault, a.to_vault_home), interactive=_tty())
+            for s in (store, target):
+                s.prompt = f"Master passphrase of {s.home.name}: "
+            if a.cmd == "copy-system":
+                store.copy_system(a.system, target)
+                print(f"copied {a.system!r} to {target.home}; commit and push {target.home}")
+            else:
+                store.move_system(a.system, target)
+                print(f"moved {a.system!r} to {target.home}; commit and push {target.home} and {store.home}")
         return 0
     except CredentialError as exc:
         print(f"error: {exc}", file=sys.stderr)
