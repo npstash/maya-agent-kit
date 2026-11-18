@@ -12,5 +12,6 @@ Copy the files of `templates/` into `[project]/sdd/`. For the service variant, c
 - [SRS.md](templates/SRS.md) — required behaviour of the system (EARS or structured) and the user interface
 - [QAS.md](templates/QAS.md) — quality attribute scenarios
 - [DESIGN.md](templates/DESIGN.md) — architecture (C4 levels 1 to 3), interfaces, data, deployment
+- [STP.md](templates/STP.md) — the complete test plan
 - [ADR.md](templates/ADR.md) — one architecture decision and its reasons
 - [ADL.md](templates/ADL.md) — log of the design decisions

@@ -28,6 +28,14 @@ The templates of the SDD documents are in [templates](../tools/sdd-templates/tem
 - The project with the SRS is the root of the product requirements. Cover each requirement in its DESIGN.md or in an API of a direct dependency.
 - Check that the APIs of the dependencies of a project give each behaviour that its own APIs need. Check the dependencies of each dependency in the same way.
 
+## Test plan
+
+- Keep `sdd/STP.md` in each project with an `sdd/` folder, in the full variant and in the service variant.
+- List each test of the project in it, in the category of the test, with its description and the item that it verifies.
+- Write in each description what the test does, what it checks and the expected behaviour. Read the code of the test for it. Do not repeat the name of the test.
+- Write the full procedure of each manual test: the preconditions, the numbered steps and the expected result of each step.
+- When you add, change or remove a test, update `STP.md` in the same commit.
+
 ## Values
 
 - Write each value (a limit, a time, a default) as an uppercase name, e.g. `RETRY_COUNT`.

@@ -19,8 +19,8 @@
 ## Test doubles
 
 - Test against the real API of another repository. Do not copy its code.
-- The owner of an API supplies a verified fake of each API that it exposes. A contract suite runs each
-  case against the fake and against the real code.
+- The owner of an API supplies a verified fake of each API that it exposes, and a contract suite. The owner runs
+  the suite against the fake. An implementation of the API runs it against its own code: this tests only its own code.
 - In a unit test, use only test doubles: a verified fake, or a mock made from the real API.
 - A test covers only its own project. A test that runs the real code of a dependency, or a real dependency, is an integration test. Write an integration test only in a project with an SRS, and only for a direct dependency.
 

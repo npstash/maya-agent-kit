@@ -21,6 +21,7 @@ These documents form a set of SDD (SW Development Documents). Put them into `[pr
 | SRS.md | Required behaviour of the system (EARS or structured) | When the user gives or updates a requirement | SRS |
 | QAS.md | Measurable quality attributes (ADD) | When the drivers are known or updated | QAS |
 | DESIGN.md | Current state of the architecture (C4 levels 1–3) | When design decisions are made | DESIGN |
+| STP.md | The complete test plan: each test with its category, its description and the item that it verifies | When a test is added, changed or removed | STP |
 | `design/[container].md` | Components of one large container | When section 5 of DESIGN gets too large, must be confirmed | DESIGN |
 | `adr/ADR-[yyyymmdd]-[topic].md` | One decision and its reasons | At each important design decision, must be confirmed | ADR |
 | ADL.md | Log of the design decisions, one line each | At each non-trivial design decision | ADL |
@@ -42,6 +43,7 @@ Use the service variant only when the user asks for it. The service variant uses
 | SRS.md | Do not create |
 | QAS.md | Optional |
 | DESIGN.md | Required |
+| STP.md | Required |
 | ADL.md | Required |
 | `adr/ADR-[yyyymmdd]-[topic].md` | Optional |
 
