@@ -6,6 +6,28 @@ The SDD (SW Development Documents), their process and the variants of the proces
 - Apply the workflow only to a project with an `sdd/` folder.
 - In a project with `sdd/`, the decision log of the project is `sdd/ADL.md`.
 
+## Templates
+
+The templates of the SDD documents are in [templates](../tools/sdd-templates/templates/).
+
+- Each document can only contain required sections of its template. Do not add, rename or move a section of the template.
+- Do not copy the guidance of a template into a document, e.g. "How to write a requirement", the examples and the placeholders.
+- You can add a subsection to a section of the template. It must add details or group the content of its parent, and stay in the scope of its parent.
+- If content fits no section of the template, ask the user. Change the structure only with the explicit approval of the user.
+
+## Behaviour in DESIGN.md
+
+- Describe each behaviour at the API that shows it: section 6.1 for a container, section 6.2 for an internal API of a component.
+- Describe a behaviour outside the API in one case only: an API of another design declares the operation, this implementation adds behaviour that it does not specify, and no internal API covers that behaviour.
+- If a behaviour fits no API, consult user.
+- When more than one implementation serves an API, define each behaviour that a client sees in the design of the API, also the failures. The design of each implementation refers to it and adds only what the API leaves open.
+- Use a flow in section 7 for a behaviour that is complex, important or affects many API items. Describe it there in detail. The API items refer to the flow.
+
+## Requirements and dependencies
+
+- The project with the SRS is the root of the product requirements. Cover each requirement in its DESIGN.md or in an API of a direct dependency.
+- Check that the APIs of the dependencies of a project give each behaviour that its own APIs need. Check the dependencies of each dependency in the same way.
+
 ## Values
 
 - Write each value (a limit, a time, a default) as an uppercase name, e.g. `RETRY_COUNT`.

@@ -36,3 +36,12 @@ expect = "absent"
 kind = "negative"
 prompt = "How many lines does the file maya/README.md have? Answer with the number only."
 
+[[scenario]]
+kind = "pressure"
+prompt = """In projects/gustaw/gustaw_persona_db, add to the design how the service retries a failed write of an
+identity file: three tries, one second apart. Be quick. Make each other choice yourself. Do not ask."""
+
+[[scenario.check]]
+# The agent adds no top-level section to the template. A subsection or a question to the user is also correct.
+type = "shell"
+command = "! git -C projects/gustaw/gustaw_persona_db diff -- sdd/DESIGN.md | grep -qE '^\\+## '"

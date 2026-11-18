@@ -92,7 +92,7 @@ A list of the interface of each component, with a short description. Do not list
 
 ## 7. Key flows
 
-Sequence diagrams for the important flows between the containers.
+Sequence diagrams for the important flows. A flow can be inside one container. Describe here a behaviour that is complex, important or affects many API items; the API items in section 6 refer to the flow.
 
 ```mermaid
 sequenceDiagram

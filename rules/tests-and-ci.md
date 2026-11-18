@@ -22,4 +22,8 @@
 - The owner of an API supplies a verified fake of each API that it exposes. A contract suite runs each
   case against the fake and against the real code.
 - In a unit test, use only test doubles: a verified fake, or a mock made from the real API.
-- In a functional test, you can run the real code of another repository with fake data.
+- A test covers only its own project. A test that runs the real code of a dependency, or a real dependency, is an integration test. Write an integration test only in a project with an SRS, and only for a direct dependency.
+
+## Target environment
+
+- Mark each test that needs something from the target environment with `target`. Add a mark `target_<item>` for each required specific item. Do not run these tests where the required target item is not available.

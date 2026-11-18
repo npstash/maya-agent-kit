@@ -3,6 +3,7 @@
 
 # Generated / intermediate files (see rules/deliverables-only.md)
 .local_assets/
+__pycache__/
 
 # Node
 node_modules/
