@@ -54,3 +54,11 @@ Tests that a person does. Write the full procedure: the preconditions, then numb
 | Test | Description | Requirement or QAS |
 | --- | --- | --- |
 | [M-01] | Preconditions: [state of the system]. 1. [action] Expected: [result]. 2. [action] Expected: [result]. | [REQ-NNN or QAS-NNN] |
+
+## 7. Other tests
+
+Remaining test types, such as static analysis tests, memory tests, anything that does not fit previous sections.
+
+| Test | Description |
+| --- | --- |
+| [test] | [description] |
