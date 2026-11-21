@@ -15,6 +15,13 @@ The templates of the SDD documents are in [templates](../tools/sdd-templates/tem
 - You can add a subsection to a section of the template. It must add details or group the content of its parent, and stay in the scope of its parent.
 - If content fits no section of the template, ask the user. Change the structure only with the explicit approval of the user.
 
+## Target environment
+
+- Write "target host", "target environment" or "target runtime" for the deployment target. Do not write a host name.
+- Describe the target environment in the section "Deployment" of `DESIGN.md`: the current hardware, OS, container
+  runtime and devices.
+- For a measurement or a verification, give the hardware, not a host name.
+
 ## Behaviour in DESIGN.md
 
 - Describe each behaviour at the API that shows it: section 6.1 for a container, section 6.2 for an internal API of a component.
