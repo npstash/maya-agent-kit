@@ -173,3 +173,7 @@
 - 20261121-01 Nestor 20f892ff195b After the removal of a system or a secret, the CLI recommends a rotation of the master key and prints the command; the tool does not rotate
 - 20261121-02 Opus-5.5 20f892ff195b delete-system, move-system and a sync that removes a secret give the recommendation; copy-system and the rename commands do not
 - 20261121-03 Opus-5.5 20f892ff195b The printed command has the vault option of the call: --vault NAME or --vault-home DIR
+- 20261121-04 Nestor 09b37d7b07ed A service reads its secrets through secrets_proxy, reference code that each project copies and does not change
+- 20261121-05 Nestor 09b37d7b07ed The configuration names each secret with its vault entry, its key and its environment variable; the service uses the logical name
+- 20261121-06 Nestor 09b37d7b07ed The proxy selects the provider one time at the start: the vault if the configuration names one, else the environment; there is no fallback for each secret
+- 20261121-07 Nestor 09b37d7b07ed The environment provider reads the variable or the file of <variable>_FILE, then removes both variables from the environment of the process

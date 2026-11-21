@@ -12,6 +12,9 @@ secrets, or write code that reads them, from env vars, `.env`, `~/.netrc`,
   the user. An agent never gives, reads or asks for the passphrase.
 - Exception: the vault tool reads and writes its own key passphrases in the OS keyring. Do not read
   them in another way.
+- Exception: a service that other people can deploy reads its secrets through the copy of
+  [secrets_proxy.py](../tools/auth/src/secrets_proxy.py). If its configuration names no vault, the
+  proxy reads environment variables. Read secrets from the environment in no other way.
 - Exception: for `git` and `gh`, you can also use a token from another source that is
   available, e.g. a git credential helper, the askpass of the editor, `gh auth token` or
   `git credential fill`. Thus a new clone can push its enrolment request before its vault

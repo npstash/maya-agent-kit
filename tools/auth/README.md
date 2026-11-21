@@ -46,6 +46,16 @@ its encrypted name. This needs the passphrase too, and writes a line to `access.
   repositories above this folder.
 - `create-vault` needs `--vault-home`.
 
+## Secrets of a service
+
+[src/secrets_proxy.py](src/secrets_proxy.py) gives the secrets of a service from the vault or from
+environment variables. Copy the file into the source of the project. Do not change a copy.
+
+- The configuration names each secret: its vault entry and key, and its environment variable.
+- If the configuration names a vault, each secret comes from the vault. Else each secret comes from the
+  environment: the variable, or the file that `<variable>_FILE` gives.
+- The environment provider removes the variables after it reads them.
+
 ## Edit
 
 1. `run.sh edit NAME ...` writes an edit file `entry-<ID>.json` for each system into the
