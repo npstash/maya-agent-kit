@@ -105,5 +105,8 @@ Do this only when the user asks, with the names that the user gives.
 
 The tool [README](../../tools/auth/README.md#edit) gives the rules of the edit file.
 
+After `delete-system`, `move-system` or `sync`, the CLI can print `recommended: ... Rotate the
+master key` with a command. Give the user this message and the command. Do not run the command.
+
 Rotation of the master key does not protect secrets committed under the old key. Tell the
 user to change those at the source system.

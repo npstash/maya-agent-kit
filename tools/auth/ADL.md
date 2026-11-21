@@ -170,3 +170,6 @@
 - 20261116-05 Opus-5.5 753936b15c50 copy-system and move-system refuse a system that exists in the target vault, and a system with an edit file in a vault that they change
 - 20261116-06 Opus-5.5 753936b15c50 move-system writes the target vault first, then deletes the entry in the source vault
 - 20261116-07 Opus-5.5 753936b15c50 copy-system and move-system write an access log line with the entry ID and the secret names into each vault
+- 20261121-01 Nestor 20f892ff195b After the removal of a system or a secret, the CLI recommends a rotation of the master key and prints the command; the tool does not rotate
+- 20261121-02 Opus-5.5 20f892ff195b delete-system, move-system and a sync that removes a secret give the recommendation; copy-system and the rename commands do not
+- 20261121-03 Opus-5.5 20f892ff195b The printed command has the vault option of the call: --vault NAME or --vault-home DIR

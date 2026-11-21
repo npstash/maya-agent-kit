@@ -1193,3 +1193,45 @@ def test_cli_transfer_asks_for_each_passphrase_only_in_a_terminal(two: Path, tmp
     assert cs.main(args) == 0
     assert asked == ["Master passphrase of vault-home: ", "Master passphrase of vault-locked: "]
     assert secrets(locked, SYS) == {"token": "t"}
+
+
+# -- recommendation to rotate the master key --------------------------------------------------
+
+def rotation_command(home: Path) -> str:
+    return f"{cs.TOOL / 'run.sh'} --vault-home {home} rotate-master-key"
+
+
+def test_cli_recommends_a_rotation_after_delete_and_move(two: Path, other: Path,
+                                                         capsys: pytest.CaptureFixture[str]) -> None:
+    assert cs.main(["--vault-home", str(two), "delete-system", "jira"]) == 0
+    out = capsys.readouterr().out
+    assert "recommended: a system was removed" in out and rotation_command(two) in out
+    assert cs.main(["--vault-home", str(two), "move-system", SYS, "--to-vault-home", str(other)]) == 0
+    assert rotation_command(two) in capsys.readouterr().out
+    assert cs.Store(two)._get("jira") is None                 # the vault is not rotated
+    assert vault_entries(two) == {}
+
+
+def test_cli_recommends_a_rotation_only_when_sync_removes_a_secret(two: Path,
+                                                                   capsys: pytest.CaptureFixture[str]) -> None:
+    edit(two, SYS, credentials={"token": "", "new": "n"})     # a secret added
+    assert cs.main(["--vault-home", str(two), "sync"]) == 0
+    assert "recommended" not in capsys.readouterr().out
+    edit(two, SYS, credentials={"new": ""})                   # token removed
+    assert cs.main(["--vault-home", str(two), "sync"]) == 0
+    out = capsys.readouterr().out
+    assert "recommended: a secret was removed" in out and rotation_command(two) in out
+
+
+def test_cli_rotation_command_uses_the_vault_name(two: Path, monkeypatch: pytest.MonkeyPatch,
+                                                  capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(cs, "find_vault", lambda name: two)
+    assert cs.main(["--vault", "vault-x", "delete-system", "jira"]) == 0
+    assert f"{cs.TOOL / 'run.sh'} --vault vault-x rotate-master-key" in capsys.readouterr().out
+
+
+def test_copy_and_rename_recommend_no_rotation(two: Path, other: Path,
+                                                               capsys: pytest.CaptureFixture[str]) -> None:
+    assert cs.main(["--vault-home", str(two), "copy-system", SYS, "--to-vault-home", str(other)]) == 0
+    assert cs.main(["--vault-home", str(two), "rename-secret", SYS, "token", "tok"]) == 0
+    assert "recommended" not in capsys.readouterr().out

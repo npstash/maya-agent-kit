@@ -39,6 +39,7 @@ import ipaddress
 import json
 import platform
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -742,6 +743,7 @@ class Store:
         self._passphrase = passphrase
         self._key: str | None = None       # the master key, once loaded
         self._records: dict[str, dict[str, str]] | None = None   # the entries of vault.json, once read
+        self.removed_secrets = False       # sync() sets it when it removes a secret of a system
 
     # -- opening ------------------------------------------------------------------------
 
@@ -1281,7 +1283,10 @@ class Store:
             name, new = self._from_edit(path, current)
             names.append(name)
             changed[name] = new
-        updates = [c for c in changed.values() if c != self._get(c.name)]
+        old = {c.name: self._get(c.name) for c in changed.values()}
+        updates = [c for c in changed.values() if c != old[c.name]]
+        self.removed_secrets = any(set(prev._secrets) - set(c._secrets)
+                                   for c in updates if (prev := old[c.name]) is not None)
         for c in updates:
             self._put(c)
         self._save()
@@ -1569,6 +1574,14 @@ def _enrol_cli(store: Store, name: str | None) -> None:
               f"`approve-enrol {name}` in a trusted clone")
 
 
+def _recommend_rotation(vault: str | None, home: str | None, what: str) -> None:
+    """Tell the user to rotate the master key after a removal. The CLI does not rotate."""
+    where = ["--vault", vault] if vault else ["--vault-home", home or ""]
+    command = shlex.join([str(TOOL / "run.sh"), *where, "rotate-master-key"])
+    print(f"recommended: {what} was removed, but each clone that opened the vault knows the master key. "
+          f"Rotate the master key: run this command in a terminal, it needs the passphrase:\n  {command}")
+
+
 def main(argv: list[str] | None = None) -> int:
     global _CLI
     _CLI = True
@@ -1682,6 +1695,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(path)
         elif a.cmd == "sync":
             print(f"synced {len(store.sync())} system(s); commit and push the vault home")
+            if store.removed_secrets:
+                _recommend_rotation(a.vault, a.vault_home, "a secret")
         elif a.cmd == "get-system":
             _print_system(store.get_system(a.system))
         elif a.cmd == "get-secret":
@@ -1695,6 +1710,7 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "delete-system":
             store.delete_system(a.system)
             print(f"deleted {a.system!r}")
+            _recommend_rotation(a.vault, a.vault_home, "a system")
         elif a.cmd == "rename-system":
             store.rename_system(a.system, a.new)
             print("renamed")
@@ -1711,6 +1727,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 store.move_system(a.system, target)
                 print(f"moved {a.system!r} to {target.home}; commit and push {target.home} and {store.home}")
+                _recommend_rotation(a.vault, a.vault_home, "a system")
         return 0
     except CredentialError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -209,6 +209,10 @@ Both need the passphrase, so run them in a terminal. Each entry gets a new ID.
 `change-passphrase` encrypts `master.enc.key` and `admin.enc.key` with a new passphrase. It
 needs the old passphrase. Each command copies the files into `.local_assets/` of this folder first.
 
+After `delete-system` and `move-system`, the CLI recommends a rotation of the master key.
+`sync` does this too when it removes a secret. The CLI prints the `rotate-master-key` command
+for a terminal. It does not rotate: a clone key cannot rotate.
+
 A clone that is unenrolled keeps the secret values from before the rotation, and git history
 keeps old vault files. Change those secrets at the source if necessary.
 
