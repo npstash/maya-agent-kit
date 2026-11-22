@@ -26,6 +26,19 @@ secrets, or write code that reads them, from env vars, `.env`, `~/.netrc`,
 - If a secret is missing, locked or empty, stop and ask the user to add it to the vault.
   Use no fallback.
 
+## Commit messages
+
+A part of a system name is, e.g., a host, a service, a product or a secret field.
+
+- In a vault home, write only one of these subject lines:
+  - `Update the vault`
+  - `Enrol <clones>`, `Approve the enrolment of <clones>`, `Unenrol <clones>`
+  - `Rotate the master key`
+- In a repository with a vault home as a submodule, write `Update <vault home>` for its pointer,
+  e.g. `Update vault-main`. Write no other text about the vault change.
+- Apply the same subject lines to the title and the description of a PR.
+- Keep the messages that the vault tool writes.
+
 ## Confirmation
 
 Get the explicit confirmation of the user before each of these actions. Get a new one for each

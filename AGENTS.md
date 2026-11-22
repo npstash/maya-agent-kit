@@ -8,7 +8,7 @@
 - **agent-identity** — @rules/agent-identity.md
 - **per-project-runtimes** — Never change a global runtime. When you make or change a runtime, dependencies or a `run.sh`: read [per-project-runtimes](rules/per-project-runtimes.md).
 - **tests-and-ci** — Tests write only into `.local_assets/`. When you write, change or run tests or CI: read [tests-and-ci](rules/tests-and-ci.md).
-- **credentials-from-vault** — Get secrets only from the vault. Never write a secret into a transcript, log or file. Never ask for one in chat. When a task needs a secret, authentication, or a vault or enrolment action: read [credentials-from-vault](rules/credentials-from-vault.md).
+- **credentials-from-vault** — Get secrets only from the vault. Never write a secret into a transcript, log or file. Never ask for one in chat. Never write a system name of a vault, or a part of it, into a commit message or a PR. When a task needs a secret, authentication, or a vault or enrolment action, or you commit a change of a vault home or of its submodule pointer: read [credentials-from-vault](rules/credentials-from-vault.md).
 - **voice-mode** — When the prompt is in voice mode: read [voice-mode](rules/voice-mode.md).
 - **architecture-decision-log** — When the user accepts an architecture decision or a business rule, or you change an `ADL.md` or an ADR: read [architecture-decision-log](rules/architecture-decision-log.md).
 - **sdd-documentation** — Make an `sdd/` folder only when the user asks. When you work in a project with an `sdd/` folder: read [sdd-documentation](rules/sdd-documentation.md).
