@@ -215,6 +215,9 @@ def _ip_addresses() -> list[str]:
     return [str(ip) for ip in sorted(addresses, key=lambda ip: (ip.version, ip))]
 
 
+CONTAINER_MARKERS = ("/.dockerenv", "/run/.containerenv")   # Docker, Podman
+
+
 def _machine_id() -> str:
     """A stable ID of the OS installation: /etc/machine-id, else the MachineGuid of Windows; else ""."""
     for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
@@ -1111,7 +1114,11 @@ class Store:
         return fingerprint(pub.read_bytes())
 
     def _warn_if_moved(self, name: str) -> None:
-        """Warn if recipients/<name>.inf is missing, or names another machine or another clone path."""
+        """Warn if recipients/<name>.inf is missing, or names another machine or another clone path.
+
+        No warning in a container: it mounts the vault of a host clone at another path."""
+        if any(Path(marker).exists() for marker in CONTAINER_MARKERS):
+            return
         info = _read_info(self.recipients / f"{name}.inf")
         changed = []
         if not info:

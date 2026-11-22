@@ -108,7 +108,8 @@ clone. Each `enrol` writes the file again. The format is INI with one section `[
   recipient without a `.inf`. Then commit and push the vault home.
 - When a clone key opens the vault, the tool compares the `.inf` of that recipient with this
   clone. If the file is missing, or its `machine_id` or `clone_path` is different, the tool
-  writes a warning to stderr.
+  writes a warning to stderr. There is no warning in a container (`/.dockerenv` or `/run/.containerenv`):
+  a container mounts the vault of a host clone at another path.
 - `recipients` lists each recipient: approved or request, "this clone", the time of the `.inf`,
   and its computer, user, clone path and machine ID. It needs no passphrase.
 

@@ -1305,3 +1305,17 @@ def test_recipients_cli_marks_this_clone(home: Path, capsys: pytest.CaptureFixtu
     assert cs.main(["--vault-home", str(home), "recipients"]) == 0
     line = capsys.readouterr().out.strip()
     assert line.startswith("a\tapproved\tthis clone\t")
+
+
+def test_a_container_gets_no_moved_warning(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                           capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(cs, "_machine_id", lambda: "m1")
+    cs.Store(home, PW).enrol("a", None)
+    put(home, SYS, token="t")
+    marker = tmp_path / ".dockerenv"
+    marker.write_text("")
+    monkeypatch.setattr(cs, "CONTAINER_MARKERS", (str(marker),))
+    monkeypatch.setattr(cs, "_machine_id", lambda: "m2")
+    capsys.readouterr()
+    cs.Store(home).get_credential(SYS)
+    assert "out of date" not in capsys.readouterr().err
