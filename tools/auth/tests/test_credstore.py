@@ -1235,3 +1235,73 @@ def test_copy_and_rename_recommend_no_rotation(two: Path, other: Path,
     assert cs.main(["--vault-home", str(two), "copy-system", SYS, "--to-vault-home", str(other)]) == 0
     assert cs.main(["--vault-home", str(two), "rename-secret", SYS, "token", "tok"]) == 0
     assert "recommended" not in capsys.readouterr().out
+
+
+# -- recipient information: machine_id, refresh-inf, recipients, moved clones -----------
+
+def test_the_inf_has_the_machine_id(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs, "_machine_id", lambda: "m1")
+    cs.Store(home, PW).enrol("a", None)
+    assert cs._read_info(home / "recipients" / "a.inf")["machine_id"] == "m1"
+
+
+def test_refresh_inf_keeps_created_and_writes_the_current_facts(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cs, "_machine_id", lambda: "m1")
+    cs.Store(home, PW).enrol("a", None)
+    inf = home / "recipients" / "a.inf"
+    created = cs._read_info(inf)["created"]
+    monkeypatch.setattr(cs, "_machine_id", lambda: "m2")
+    assert cs.Store(home).refresh_info() == inf
+    info = cs._read_info(inf)
+    assert info["created"] == created and info["machine_id"] == "m2" and info["updated"]
+    assert info["fingerprint"] == cs.fingerprint((home / "recipients" / "a.pub").read_bytes())
+
+
+def test_refresh_inf_writes_a_missing_inf(home: Path) -> None:
+    cs.Store(home, PW).enrol("a", None)
+    (home / "recipients" / "a.inf").unlink()
+    cs.Store(home).refresh_info("a")
+    assert cs._read_info(home / "recipients" / "a.inf")["created"] == "unknown"
+
+
+def test_refresh_inf_needs_a_key_of_this_clone(home: Path, tmp_path: Path) -> None:
+    other = tmp_path / "other"
+    shutil.copytree(home, other)
+    cs.Store(other).enrol("req", None)
+    (home / "recipients").mkdir(exist_ok=True)
+    shutil.copy(other / "recipients" / "req.pub", home / "recipients" / "req.pub")
+    with pytest.raises(cs.CredentialError, match="not a recipient of this clone"):
+        cs.Store(home).refresh_info("req")
+
+
+def test_recipients_list_gives_state_and_this_clone(home: Path, tmp_path: Path) -> None:
+    cs.Store(home, PW).enrol("me.1", None)
+    other = tmp_path / "other"
+    shutil.copytree(home, other)
+    (other / "clone.me.1.key").unlink()
+    cs.Store(other).enrol("req", None)
+    for ext in (".pub", ".inf"):
+        shutil.copy(other / "recipients" / f"req{ext}", home / "recipients" / f"req{ext}")
+    got = {r.name: (r.approved, r.this_clone, bool(r.info)) for r in cs.Store(home).recipients_list()}
+    assert got == {"me.1": (True, True, True), "req": (False, False, True)}
+
+
+def test_a_moved_clone_gets_a_warning(home: Path, monkeypatch: pytest.MonkeyPatch,
+                                      capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(cs, "_machine_id", lambda: "m1")
+    cs.Store(home, PW).enrol("a", None)
+    put(home, SYS, token="t")
+    capsys.readouterr()
+    cs.Store(home).get_credential(SYS)
+    assert "out of date" not in capsys.readouterr().err
+    monkeypatch.setattr(cs, "_machine_id", lambda: "m2")
+    cs.Store(home).get_credential(SYS)
+    err = capsys.readouterr().err
+    assert "recipients/a.inf" in err and "another machine_id" in err and "refresh-inf" in err
+
+
+def test_recipients_cli_marks_this_clone(home: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cs.Store(home, PW).enrol("a", None)
+    assert cs.main(["--vault-home", str(home), "recipients"]) == 0
+    line = capsys.readouterr().out.strip()
+    assert line.startswith("a\tapproved\tthis clone\t")

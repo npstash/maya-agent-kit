@@ -215,6 +215,25 @@ def _ip_addresses() -> list[str]:
     return [str(ip) for ip in sorted(addresses, key=lambda ip: (ip.version, ip))]
 
 
+def _machine_id() -> str:
+    """A stable ID of the OS installation: /etc/machine-id, else the MachineGuid of Windows; else ""."""
+    for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            value = Path(path).read_text(errors="replace").strip()
+        except OSError:
+            continue
+        if value:
+            return value
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
+                return str(winreg.QueryValueEx(key, "MachineGuid")[0])
+        except OSError:
+            return ""
+    return ""
+
+
 def _os_info() -> dict[str, str]:
     """uname, the Linux distribution and WSL, if detected."""
     u = platform.uname()
@@ -240,7 +259,7 @@ def _clone_info(home: Path) -> dict[str, str]:
     """The facts about this clone that recipients/<name>.inf records. Empty values are dropped."""
     root = _root_repo(home)
     url = _repo_url(root) if root else ""
-    info = {"computer": socket.gethostname(), "user": _user_name(), **_os_info(),
+    info = {"computer": socket.gethostname(), "machine_id": _machine_id(), "user": _user_name(), **_os_info(),
             "ip_addresses": ", ".join(_ip_addresses()), "clone_path": str(root) if root else "",
             "repository": url}
     return {k: v for k, v in info.items() if v}
@@ -278,6 +297,26 @@ class _CaseParser(configparser.ConfigParser):
 
     def optionxform(self, optionstr: str) -> str:
         return optionstr
+
+
+def _read_info(path: Path) -> dict[str, str]:
+    """The fields of a recipients/<name>.inf file, or {} if it is missing or not readable."""
+    parser = _CaseParser(interpolation=None)
+    try:
+        parser.read_string(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, configparser.Error):
+        return {}
+    return dict(parser["clone"]) if parser.has_section("clone") else {}
+
+
+@dataclass(frozen=True)
+class Recipient:
+    """A recipient of a vault: its name, its state and the fields of its .inf file."""
+
+    name: str
+    approved: bool
+    this_clone: bool
+    info: Mapping[str, str]
 
 
 def _write_info(path: Path, info: dict[str, str]) -> None:
@@ -774,6 +813,7 @@ class Store:
                 skipped.append(f"{name}: does not open {wrapped.name}")
                 continue
             self._key, self.method = key, f"clone-key:{name}:{how}"
+            self._warn_if_moved(name)
             return key
         tried = ""
         try:
@@ -1069,6 +1109,53 @@ class Store:
         self._wrap(name, self._load_key())
         _log(self.home, "approve-enrol", name, method=self.method)
         return fingerprint(pub.read_bytes())
+
+    def _warn_if_moved(self, name: str) -> None:
+        """Warn if recipients/<name>.inf is missing, or names another machine or another clone path."""
+        info = _read_info(self.recipients / f"{name}.inf")
+        changed = []
+        if not info:
+            changed.append("the file is missing")
+        else:
+            machine, root = _machine_id(), _root_repo(self.home)
+            if info.get("machine_id") and machine and info["machine_id"] != machine:
+                changed.append("another machine_id")
+            if info.get("clone_path") and root and info["clone_path"] != str(root):
+                changed.append(f"clone_path {info['clone_path']}, not {root}")
+        if changed:
+            print(f"warning: recipients/{name}.inf of {self.home} is out of date ({'; '.join(changed)}). "
+                  "Run `run.sh refresh-inf` in this clone, then commit and push the vault home", file=sys.stderr)
+
+    def refresh_info(self, name: str | None = None) -> Path:
+        """Write recipients/<name>.inf of a recipient of this clone again, with the current facts.
+
+        Keeps the field "created" and adds "updated". No passphrase. Returns the path.
+        """
+        own = self.own_recipients()
+        name = _check_name(name, "recipient") if name else self._only(own, "recipient")
+        if name not in own:
+            raise CredentialError(f"{name!r} is not a recipient of this clone: {self.home} has no clone.{name}.key "
+                                  "with a .pub or a .master.enc")
+        pub = self.recipients / f"{name}.pub"
+        if not pub.is_file():
+            raise CredentialError(f"{pub} does not exist")
+        path = self.recipients / f"{name}.inf"
+        created = _read_info(path).get("created", "unknown")
+        now = f"{datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}"
+        _write_info(path, {"name": name, "created": created, "updated": now,
+                           "fingerprint": fingerprint(pub.read_bytes()), **_clone_info(self.home)})
+        _log(self.home, "refresh-inf", name)
+        return path
+
+    def recipients_list(self) -> list[Recipient]:
+        """Each recipient (approved or request) with the fields of its .inf. No passphrase."""
+        if not self.recipients.is_dir():
+            return []
+        own = set(self.own_recipients())
+        names = sorted({p.name.removesuffix(ext) for p in self.recipients.iterdir()
+                        for ext in (".pub", ".master.enc") if p.name.endswith(ext)})
+        return [Recipient(n, (self.recipients / f"{n}.master.enc").is_file(), n in own,
+                          MappingProxyType(_read_info(self.recipients / f"{n}.inf"))) for n in names]
 
     def request_info(self, name: str) -> str:
         """The content of recipients/<name>.inf, or "" if the request has none."""
@@ -1594,6 +1681,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("create-vault", help="create a vault: master key, admin key, empty vault.json, git hook")
     p = sub.add_parser("enrol", help="make a key pair for this clone; self-enrol in a terminal, else leave a request")
     p.add_argument("name", nargs="?", help="recipient name (default: a generated one)")
+    p = sub.add_parser("refresh-inf", help="write recipients/<name>.inf of this clone again, with the current facts")
+    p.add_argument("name", nargs="?", help="recipient name (default: this clone)")
+    sub.add_parser("recipients", help="list the recipients: state, this clone, and the facts of their .inf files")
     p = sub.add_parser("approve-enrol", help="wrap the master key for a request")
     p.add_argument("name")
     p = sub.add_parser("unenrol", help="delete the recipient files of this clone, or of NAME; no rotation")
@@ -1657,6 +1747,15 @@ def main(argv: list[str] | None = None) -> int:
         store = Store(vault_home(a.vault, a.vault_home), interactive=_tty())
         if a.cmd == "enrol":
             _enrol_cli(store, a.name)
+        elif a.cmd == "refresh-inf":
+            print(f"wrote {store.refresh_info(a.name)}; commit and push the vault home")
+        elif a.cmd == "recipients":
+            for r in store.recipients_list():
+                i = r.info
+                place = " ".join(f"{k}={i[k]}" for k in ("computer", "user", "clone_path", "machine_id") if i.get(k))
+                when = i.get("updated") or i.get("created") or "-"
+                print("\t".join([r.name, "approved" if r.approved else "request",
+                                 "this clone" if r.this_clone else "-", when, place or "no .inf"]))
         elif a.cmd == "approve-enrol":
             info = store.request_info(a.name) or "no request info\n"
             print(f"approved {a.name}\n{info}fingerprint\t{store.approve_enrol(a.name)}\n"

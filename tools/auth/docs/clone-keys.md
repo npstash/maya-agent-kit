@@ -86,8 +86,10 @@ clone. Each `enrol` writes the file again. The format is INI with one section `[
 | --- | --- |
 | `name` | The recipient name. |
 | `created` | UTC time of the `enrol`. |
+| `updated` | UTC time of the last `refresh-inf`. Only after a `refresh-inf`. |
 | `fingerprint` | The fingerprint of the public key. See "Approval of a request". |
 | `computer` | The host name. |
+| `machine_id` | The ID of the OS installation: `/etc/machine-id`, else the `MachineGuid` of Windows. |
 | `user` | The OS user name. The tool reads no environment variable for it. |
 | `os`, `os_release`, `os_version`, `machine`, `platform` | `uname` and the platform string. |
 | `distro`, `distro_id`, `distro_version` | Linux only: the distribution from `/etc/os-release`. |
@@ -101,6 +103,14 @@ clone. Each `enrol` writes the file again. The format is INI with one section `[
 - The tool writes no key with an empty value, e.g. without git.
 - The `.inf` comes with the `.pub` in the same push. Thus it does not prove the identity of
   the clone. Compare the fingerprint through another channel.
+- `refresh-inf [NAME]` writes the `.inf` of a recipient of this clone again. It keeps `created` and
+  sets `updated`. It needs no passphrase. Use it after a move or a copy of the clone, or for a
+  recipient without a `.inf`. Then commit and push the vault home.
+- When a clone key opens the vault, the tool compares the `.inf` of that recipient with this
+  clone. If the file is missing, or its `machine_id` or `clone_path` is different, the tool
+  writes a warning to stderr.
+- `recipients` lists each recipient: approved or request, "this clone", the time of the `.inf`,
+  and its computer, user, clone path and machine ID. It needs no passphrase.
 
 ## The passphrase
 

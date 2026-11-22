@@ -177,3 +177,7 @@
 - 20261121-05 Nestor 09b37d7b07ed The configuration names each secret with its vault entry, its key and its environment variable; the service uses the logical name
 - 20261121-06 Nestor 09b37d7b07ed The proxy selects the provider one time at the start: the vault if the configuration names one, else the environment; there is no fallback for each secret
 - 20261121-07 Nestor 09b37d7b07ed The environment provider reads the variable or the file of <variable>_FILE, then removes both variables from the environment of the process
+- 20261122-01 Nestor 8642eeaea1c9 The .inf of a recipient records the machine ID of the OS installation
+- 20261122-02 Nestor 8642eeaea1c9 refresh-inf writes the .inf of a recipient of this clone again; it keeps created and needs no passphrase
+- 20261122-03 Nestor 8642eeaea1c9 The tool warns when a clone key opens the vault and the .inf of its recipient is missing or names another machine ID or clone path
+- 20261122-04 Nestor 8642eeaea1c9 recipients lists each recipient with its state, this clone and the facts of its .inf, without a passphrase

@@ -15,7 +15,7 @@ Each vault is a repository `vault-<name>` in the folder `vaults/`.
 | `admin.pub` | yes | The admin public key. It encrypts the name of each entry. |
 | `recipients/<name>.pub` | yes | Public key (RSA-3072) of the clone `<name>`. |
 | `recipients/<name>.master.enc` | yes | The master key, encrypted for `<name>` (RSA-OAEP, SHA-256). |
-| `recipients/<name>.inf` | yes | Information about the clone of `<name>`: OS, WSL, IP addresses, path, repository URL. See [docs/clone-keys.md](docs/clone-keys.md#clone-information). |
+| `recipients/<name>.inf` | yes | Information about the clone of `<name>`: OS, WSL, machine ID, IP addresses, path, repository URL. See [docs/clone-keys.md](docs/clone-keys.md#clone-information). |
 | `clone.<name>.key` | no | Private key of a clone. Plain, or encrypted with a key passphrase in the OS keyring. |
 | `entry-<ID>.json` | no | Edit file of one entry. See "Edit". |
 | `access.log` | no | One line for each secret given out, key operation and failed open. |
@@ -105,6 +105,8 @@ opens the vault there.
 run.sh create-vault                      # new vault; asks for a new passphrase
 run.sh enrol [NAME]                      # key pair for this clone; see "Enrolment"
 run.sh approve-enrol NAME                # in a trusted clone: approve a request
+run.sh refresh-inf [NAME]                # write the .inf of this clone again; see docs/clone-keys.md
+run.sh recipients                        # each recipient: state, this clone, facts of its .inf
 run.sh unenrol [NAME]                    # delete the recipient files; see "Unenrolment"
 run.sh delete-private-clone-key [NAME]   # after the push of unenrol
 run.sh unenrol-and-rotate-master-key NAME  # unenrol, new master key; needs the passphrase
