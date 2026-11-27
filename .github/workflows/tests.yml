@@ -25,7 +25,7 @@ jobs:
           projects=$(find . -type d -name tests \
             -not -path '*/.*' -not -path '*/node_modules/*' \
             -exec sh -c '[ -f "$(dirname "$1")/run.sh" ]' _ {} \; -print \
-            | sed 's|^\./||; s|/tests$||' \
+            | sed 's|^\./||; s|/tests$||; s|^tests$|.|' \
             | sort \
             | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "projects=$projects" >> "$GITHUB_OUTPUT"
