@@ -8,14 +8,19 @@ The configuration of the service has this section::
 
     credentials:
       vault: vault-<name>        # optional; without it, the secrets come from the environment
+      vaultkeeper: /run/gustaw/vaultkeeper.sock   # optional; the socket of the daemon vaultkeeper
       secrets:
         <name>: {entry: "<vault entry>", key: "<secret key>", env: "<VARIABLE>"}
 
-The vault provider needs `entry` and `key`. The environment provider needs `env`.
+The vault provider and the vaultkeeper provider need `entry` and `key`. The environment provider
+needs `env`.
 
 The provider is selected one time, at the start:
 
-- The configuration names a vault: each secret comes from the vault. There is no fallback.
+- The configuration names a vault and the socket of vaultkeeper: each secret comes from the daemon
+  vaultkeeper (project gustaw_vaultkeeper). The service needs no vault files and no vault tool.
+  There is no fallback.
+- The configuration names a vault only: each secret comes from the vault. There is no fallback.
 - The configuration names no vault: each secret comes from the variable `env`, or from the file that
   the variable `<env>_FILE` gives. The provider removes both variables from `os.environ`.
   Thus the child processes of the service do not get the secrets.
@@ -26,17 +31,23 @@ The provider is selected one time, at the start:
 from __future__ import annotations
 
 import importlib
+import json
 import os
+import socket
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import BinaryIO, Protocol, cast
 
 # The repository of the vault tool, and the folder of the tool in it.
 VAULT_TOOL_REPO = "maya-agent-kit"
 VAULT_TOOL_DIR = Path("tools") / "auth"
+
+# The vaultkeeper provider: the time limit of one connection, and the largest response line.
+VAULTKEEPER_TIMEOUT_S = 10.0
+VAULTKEEPER_RESPONSE_MAX = 1024 * 1024
 
 
 class SecretError(RuntimeError):
@@ -152,6 +163,64 @@ class EnvSecrets(Secrets):
             raise SecretError(f"the configuration names no secret '{name}'") from None
 
 
+class VaultkeeperSecrets(Secrets):
+    """Secrets from the daemon vaultkeeper. The constructor reads each secret. A missing secret is an error.
+
+    For each vault entry, it sends one JSON line {"op": "get", "vault": ..., "system": ...} to the socket
+    and reads one JSON line: {"ok": true, "result": {"url", "authority_info", "secrets"}}, or
+    {"ok": false, "error": "not-granted | invalid-request | failed"}.
+    """
+
+    def __init__(self, refs: Mapping[str, SecretRef], vault: str, socket_path: Path,
+                 timeout_s: float = VAULTKEEPER_TIMEOUT_S):
+        self._values: dict[str, str] = {}
+        secrets: dict[str, Mapping[str, object]] = {}
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+                conn.settimeout(timeout_s)
+                conn.connect(str(socket_path))
+                lines = conn.makefile("rb")
+                for name, ref in refs.items():
+                    entry, key = ref.need("entry"), ref.need("key")
+                    if entry not in secrets:
+                        secrets[entry] = _vaultkeeper_get(conn, lines, vault, entry)
+                    value = secrets[entry].get(key)
+                    if not isinstance(value, str) or not value:
+                        raise SecretError(f"vault entry '{entry}' has no value for '{key}'")
+                    self._values[name] = value
+        except OSError as exc:
+            raise SecretError(f"vaultkeeper at {socket_path} cannot be used: {exc.strerror or exc}") from None
+
+    def get_secret(self, name: str) -> str:
+        try:
+            return self._values[name]
+        except KeyError:
+            raise SecretError(f"the configuration names no secret '{name}'") from None
+
+
+def _vaultkeeper_get(conn: socket.socket, lines: BinaryIO, vault: str, entry: str) -> Mapping[str, object]:
+    """The secrets of `entry`: one request line, one response line."""
+    request = {"op": "get", "vault": vault, "system": entry}
+    conn.sendall(json.dumps(request).encode() + b"\n")
+    line = lines.readline(VAULTKEEPER_RESPONSE_MAX + 1)
+    if not line.endswith(b"\n"):
+        raise SecretError(f"vaultkeeper gave no complete response for vault entry '{entry}'")
+    try:
+        response = json.loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise SecretError(f"vaultkeeper gave a response that is not JSON for vault entry '{entry}'") from None
+    if not isinstance(response, Mapping):
+        raise SecretError(f"vaultkeeper gave a response that is not an object for vault entry '{entry}'")
+    if response.get("ok") is not True:
+        error = response.get("error")
+        raise SecretError(f"vaultkeeper refused vault entry '{entry}': {error if isinstance(error, str) else 'error'}")
+    result = response.get("result")
+    found = result.get("secrets") if isinstance(result, Mapping) else None
+    if not isinstance(found, Mapping):
+        raise SecretError(f"vaultkeeper gave no secrets for vault entry '{entry}'")
+    return found
+
+
 def _read_env(variable: str, env: Mapping[str, str]) -> str:
     """The value of `variable`, or the content of the file that `<variable>_FILE` gives."""
     value = env.get(variable)
@@ -183,13 +252,20 @@ def load_get_credential(tool_dir: Path) -> GetCredential:
 
 def open_secrets(credentials: Mapping[str, object], find: FindDependency,
                  environ: MutableMapping[str, str] | None = None) -> Secrets:
-    """The secrets of the `credentials` section. Select the vault or the environment, then read each secret."""
+    """The secrets of the `credentials` section. Select vaultkeeper, the vault or the environment, then read each secret."""
     refs = parse_refs(credentials.get("secrets", {}))
     vault = credentials.get("vault")
+    vaultkeeper = credentials.get("vaultkeeper")
+    if vaultkeeper is not None and (not isinstance(vaultkeeper, str) or not vaultkeeper):
+        raise SecretError("credentials.vaultkeeper must be a socket path")
     if vault is None or vault == "":
+        if vaultkeeper is not None:
+            raise SecretError("credentials.vaultkeeper needs credentials.vault")
         return EnvSecrets(refs, environ)
     if not isinstance(vault, str):
         raise SecretError("credentials.vault must be a text")
+    if vaultkeeper is not None:
+        return VaultkeeperSecrets(refs, vault, Path(vaultkeeper))
     try:
         vault_home = find(vault)
         tool_dir = find(VAULT_TOOL_REPO) / VAULT_TOOL_DIR

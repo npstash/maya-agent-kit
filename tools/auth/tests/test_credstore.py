@@ -2,6 +2,7 @@ import base64
 from collections.abc import Callable, Iterator
 import getpass
 import hashlib
+import inspect
 import json
 import re
 import shutil
@@ -551,6 +552,10 @@ def test_the_tool_never_reads_the_environment(home: Path, monkeypatch: pytest.Mo
     with pytest.raises(cs.CredentialError, match="no way to open the vault"):
         cs.Store(home).get_credential(SYS)         # the variable is set, and ignored
     source = Path(cs.__file__).read_text()
+    # The one exception: the systemd-creds provider reads the folder $CREDENTIALS_DIRECTORY of a unit.
+    folder = inspect.getsource(cs.SystemdCredsProvider._folder)
+    assert folder in source and '.get("CREDENTIALS_DIRECTORY")' in folder
+    source = source.replace(folder, "")
     assert not any(call in source for call in ("os.environ", "import environ", "getenv", "import os"))
 
 
@@ -715,6 +720,131 @@ def test_a_provider_keeps_the_key_passphrase(home: Path, fake: FakeProvider) -> 
     fake.entries.clear()
     with pytest.raises(cs.NoWayToOpen, match="Skipped keys: kr: provider 'fake' has no key passphrase"):
         cs.Store(home).get_credential(SYS)
+
+
+class FakeSystemdCreds:
+    """systemd-creds: `encrypt` writes the value into the target; the unit gets it in its credentials folder."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.encrypted = tmp_path / "credstore.encrypted"
+        self.unit = tmp_path / "credentials"
+        self.calls: list[list[str]] = []
+
+    def run(self, argv: list[str], data: bytes) -> int:
+        self.calls.append(argv)
+        Path(argv[-1]).write_bytes(data)
+        return 0
+
+    def start_unit(self, credential: str) -> dict[str, str]:
+        """LoadCredentialEncrypted=<credential>: the decrypted file in $CREDENTIALS_DIRECTORY."""
+        self.unit.mkdir(exist_ok=True)
+        (self.unit / credential).write_bytes((self.encrypted / f"{credential}.cred").read_bytes())
+        return {"CREDENTIALS_DIRECTORY": str(self.unit)}
+
+
+def test_systemd_creds_provider_writes_and_reads_the_key_passphrase(
+        home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    put(home, SYS, token="t")
+    creds = FakeSystemdCreds(tmp_path)
+    writer = cs.SystemdCredsProvider("vk-cred", environ={}, encrypted=creds.encrypted, run=creds.run)
+    name, _, approved = cs.Store(home, recipient="vk", access_log=False).enrol("vk", writer)
+    assert (name, approved) == ("vk", False)                       # a request: the store opens no other key
+    key = (home / "clone.vk.key").read_bytes()
+    assert key.startswith(b"credstore-provider: systemd-creds vk-cred\n-----BEGIN ENCRYPTED PRIVATE KEY-----")
+    assert creds.calls == [["systemd-creds", "encrypt", "--with-key=host+tpm2", "--tpm2-pcrs=", "--name=vk-cred",
+                            "-", str(creds.encrypted / "vk-cred.cred")]]
+    if mode_works(tmp_path):
+        assert (creds.encrypted / "vk-cred.cred").stat().st_mode & 0o777 == 0o600
+    cs.Store(home, PW).approve_enrol("vk")
+
+    reader = cs.SystemdCredsProvider(environ=creds.start_unit("vk-cred"))
+    monkeypatch.setattr(cs, "PROVIDERS", [reader])
+    assert reader.available() and not reader.automatic and reader.list() == []
+    store = cs.Store(home, recipient="vk", access_log=False)
+    assert dict(store.get_credential(SYS).secrets()) == {"token": "t"}
+    assert store.method == "clone-key:vk:systemd-creds"
+
+
+def test_systemd_creds_provider_outside_a_unit(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    creds = FakeSystemdCreds(tmp_path)
+    writer = cs.SystemdCredsProvider("vk-cred", environ={}, encrypted=creds.encrypted, run=creds.run)
+    cs.Store(home, recipient="vk").enrol("vk", writer)
+    cs.Store(home, PW).approve_enrol("vk")
+    reader = cs.SystemdCredsProvider(environ={})
+    monkeypatch.setattr(cs, "PROVIDERS", [reader])
+    assert not reader.available()
+    with pytest.raises(cs.NoWayToOpen, match="vk: provider 'systemd-creds' is not available"):
+        cs.Store(home).get_credential(SYS)
+    with pytest.raises(cs.CredentialError, match="exists already"):   # never overwrite a sealed passphrase
+        writer.set("vk", "other")
+    with pytest.raises(cs.CredentialError, match="needs a credential name"):
+        cs.SystemdCredsProvider(environ={}).line()
+
+
+def test_systemd_creds_provider_needs_the_credential_in_the_line(home: Path, tmp_path: Path,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    creds = FakeSystemdCreds(tmp_path)
+    writer = cs.SystemdCredsProvider("vk-cred", environ={}, encrypted=creds.encrypted, run=creds.run)
+    cs.Store(home, recipient="vk").enrol("vk", writer)
+    cs.Store(home, PW).approve_enrol("vk")
+    key = home / "clone.vk.key"
+    key.write_bytes(key.read_bytes().replace(b"systemd-creds vk-cred", b"systemd-creds", 1))
+    monkeypatch.setattr(cs, "PROVIDERS", [cs.SystemdCredsProvider(environ=creds.start_unit("vk-cred"))])
+    with pytest.raises(cs.NoWayToOpen, match="must name the credential"):
+        cs.Store(home).get_credential(SYS)
+    with pytest.raises(cs.CredentialError, match="credential name"):
+        cs.SystemdCredsProvider("../x")
+
+
+def test_a_failed_systemd_creds_encrypt_writes_no_key(home: Path, tmp_path: Path) -> None:
+    folder = tmp_path / "credstore.encrypted"
+    writer = cs.SystemdCredsProvider("vk-cred", environ={}, encrypted=folder, run=lambda argv, data: 1)
+    with pytest.raises(cs.CredentialError, match="exit code 1"):
+        cs.Store(home, recipient="vk").enrol("vk", writer)
+    assert not (home / "clone.vk.key").exists() and not (folder / "vk-cred.cred").exists()
+
+
+def test_the_keyring_provider_takes_no_argument(home: Path, fake: FakeProvider) -> None:
+    put(home, SYS, token="t")
+    cs.Store(home, PW).enrol("kr")
+    key = home / "clone.kr.key"
+    key.write_bytes(key.read_bytes().replace(b"credstore-provider: fake", b"credstore-provider: fake extra", 1))
+    with pytest.raises(cs.NoWayToOpen, match="takes no argument"):
+        cs.Store(home).get_credential(SYS)
+
+
+def test_enrol_auto_never_selects_systemd_creds(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "credentials").mkdir()
+    monkeypatch.setattr(cs, "PROVIDERS", [cs.SystemdCredsProvider(environ={"CREDENTIALS_DIRECTORY": str(tmp_path / "credentials")})])
+    cs.Store(home, PW).enrol("auto-one")
+    assert (home / "clone.auto-one.key").read_bytes().startswith(b"-----BEGIN PRIVATE KEY-----")
+
+
+def test_the_recipient_selects_one_clone_key(home: Path) -> None:
+    put(home, SYS, token="t")
+    cs.Store(home, PW).enrol("a", None)
+    cs.Store(home, PW).enrol("b", None)
+    store = cs.Store(home, recipient="b")
+    assert dict(store.get_credential(SYS).secrets()) == {"token": "t"} and store.method == "clone-key:b:plain"
+    with pytest.raises(cs.NoWayToOpen):
+        cs.Store(home, recipient="c").get_credential(SYS)      # the other keys are not tried
+    with pytest.raises(cs.CredentialError, match="recipient name"):
+        cs.Store(home, recipient="../a")
+
+
+def test_without_the_access_log_no_line_is_written(home: Path) -> None:
+    put(home, SYS, token="t")
+    cs.Store(home, PW).enrol("a", None)
+    log = home / "access.log"
+    before = log.read_text()
+    store = cs.Store(home, access_log=False)
+    store.get_credential(SYS)
+    store.get_secret(SYS, "token")
+    with pytest.raises(cs.NoWayToOpen):
+        cs.Store(home, recipient="none", access_log=False).get_credential(SYS)   # no open-failed line
+    assert log.read_text() == before
+    cs.Store(home).get_credential(SYS)
+    assert log.read_text() != before                              # the default writes the log
 
 
 def test_list_and_delete_keyring_secrets(home: Path, fake: FakeProvider) -> None:

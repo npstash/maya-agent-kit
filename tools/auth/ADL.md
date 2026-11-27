@@ -181,3 +181,6 @@
 - 20261122-02 Nestor 8642eeaea1c9 refresh-inf writes the .inf of a recipient of this clone again; it keeps created and needs no passphrase
 - 20261122-03 Nestor 8642eeaea1c9 The tool warns when a clone key opens the vault and the .inf of its recipient is missing or names another machine ID or clone path
 - 20261122-04 Nestor 8642eeaea1c9 recipients lists each recipient with its state, this clone and the facts of its .inf, without a passphrase
+- 20261126-01 Nestor 3a8a504e75f1 A systemd-creds provider reads a key passphrase from the systemd credential that its provider line names
+- 20261126-02 Nestor 3a8a504e75f1 A Store can select one recipient by name and can turn off the access log
+- 20261126-03 Nestor 3a8a504e75f1 secrets_proxy gets a vaultkeeper provider that reads credentials through a Unix socket

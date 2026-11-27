@@ -5,7 +5,7 @@ tests/test_credstore_contract.py runs the same cases against this fake and again
 with a throwaway vault.
 
 The fake keeps the systems in memory, one set for each vault home. It has no keys, no files
-and no log. Credential and the errors are the classes of credstore.
+and no log. The parameters `recipient` and `access_log` have no effect. Credential and the errors are the classes of credstore.
 
     import credstore_fake
     credstore_fake.Store(home).set_system("API 01", secrets={"token": "t"})   # test data
@@ -13,9 +13,11 @@ and no log. Credential and the errors are the classes of credstore.
 """
 from __future__ import annotations
 
+import hmac
+from hashlib import sha256
 from pathlib import Path
 
-from credstore import Credential, CredentialError, NoWayToOpen
+from credstore import ID_HEX, Credential, CredentialError, NoWayToOpen
 
 __all__ = ["Credential", "CredentialError", "NoWayToOpen", "Store", "get_credential"]
 
@@ -27,12 +29,21 @@ class Store:
     """The vault of `vault_home`, in memory. The other arguments are as in credstore.Store."""
 
     def __init__(self, vault_home: Path | str, passphrase: str | None = None,
-                 interactive: bool = False) -> None:
+                 interactive: bool = False, recipient: str | None = None, access_log: bool = True) -> None:
         if not vault_home:
             raise CredentialError("give the vault home")
         self.home = Path(vault_home)
         self.interactive = interactive
+        self.recipient = recipient
+        self.access_log = access_log
         self._systems = _VAULTS.setdefault(self.home.resolve(), {})
+
+    def open(self) -> None:
+        """Nothing to load: the systems are in memory."""
+
+    def entry_id(self, system: str) -> str:
+        """An ID of ID_HEX hex digits, keyed with the vault home. It does not tell if the system exists."""
+        return hmac.new(str(self.home.resolve()).encode(), system.encode(), sha256).hexdigest()[:ID_HEX]
 
     def get_credential(self, system: str) -> Credential:
         """A system with all its secrets."""

@@ -55,6 +55,9 @@ environment variables. Copy the file into the source of the project. Do not chan
 - If the configuration names a vault, each secret comes from the vault. Else each secret comes from the
   environment: the variable, or the file that `<variable>_FILE` gives.
 - The environment provider removes the variables after it reads them.
+- If the configuration also gives `vaultkeeper: <socket path>`, each secret of the vault comes from
+  the daemon vaultkeeper of the project `gustaw_vaultkeeper`. The service needs no vault files and
+  no vault tool then.
 
 ## Edit
 
@@ -96,7 +99,8 @@ NUC15 SUDO
 2. Else the passphrase: `passphrase=` in Python, or a prompt of the CLI. The CLI asks only if
    stdin is an interactive terminal. It never reads the passphrase from a pipe or an option.
 
-The tool reads no environment variables. An agent shell has no terminal, so only a clone key
+The tool reads no environment variables. Exception: the provider `systemd-creds` reads the folder
+`$CREDENTIALS_DIRECTORY` of a systemd unit. An agent shell has no terminal, so only a clone key
 opens the vault there.
 
 ## Commands
@@ -243,12 +247,24 @@ c.url, c.authority_info, c.secrets()["token"]   # secrets() is an immutable map
 Each call writes a line into `access.log`: the entry ID, the secrets, the key
 (`clone-key:<name>:<plain|provider>`) and the file name of the calling script.
 
+A service uses a `Store` with these optional parameters:
+
+```python
+store = Store(home, recipient="vaultkeeper-host", access_log=False)
+store.open()                      # load the master key and vault.json now
+store.entry_id("jira")            # the entry ID: for an audit line without the system name
+```
+
+- `recipient` selects the one clone key that the store uses. It ignores the other key files.
+- `access_log=False` writes no line into `access.log`.
+
 Tests: `run.sh test`. The hook tests need `sh` and `awk`.
 
 ### Verified fake
 
 Use `credstore_fake` in the unit tests of the code that reads the vault (rule tests-and-ci). It has
-the read side of `credstore`: `get_credential`, `Store.get_credential` and `Credential`. It keeps
+the read side of `credstore`: `get_credential`, `Store.get_credential`, `Store.open`,
+`Store.entry_id` and `Credential`. It keeps
 the systems in memory and writes no files. Use `Store.set_system` to add the test data.
 
 ```python

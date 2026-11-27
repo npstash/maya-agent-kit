@@ -21,7 +21,8 @@ opens an entry. The names are also encrypted with the admin public key. Only the
 opens them, for the rotation of the master key. No command lists the entries.
 
 A clone key opens the vault. Else the passphrase does: the API parameter, or a prompt of
-the CLI in an interactive terminal. This tool never reads environment variables.
+the CLI in an interactive terminal. This tool reads no environment variable, except one: the
+provider systemd-creds reads the folder $CREDENTIALS_DIRECTORY that systemd gives to a unit.
 
     from credstore import get_credential          # PYTHONPATH must include this folder
     c = get_credential("jira", "vaults/vault-main"); c.secrets()["token"]
@@ -460,9 +461,20 @@ class Provider:
     """A store of key passphrases by recipient name. A network service can be one later."""
 
     name = ""
+    automatic = True   # enrol "auto" and the enrol prompt can select this provider
 
     def available(self) -> bool:
         raise NotImplementedError
+
+    def line(self) -> str:
+        """The text after PROVIDER_LINE in a key file that this provider writes."""
+        return self.name
+
+    def key_passphrase(self, recipient: str, argument: str) -> str | None:
+        """The key passphrase of a key file. `argument` is the text after the provider name in its first line."""
+        if argument:
+            raise CredentialError(f"provider {self.name!r} takes no argument in the provider line")
+        return self.get(recipient)
 
     def get(self, name: str) -> str | None:
         raise NotImplementedError
@@ -560,11 +572,105 @@ class KeyringProvider(Provider):
         return sorted(n for n in names if n)
 
 
-PROVIDERS: list[Provider] = [KeyringProvider()]   # tried in this sequence
+class SystemdCredsProvider(Provider):
+    """Key passphrases that systemd decrypts for a service unit (LoadCredentialEncrypted=).
+
+    The first line of the key file names the credential: `credstore-provider: systemd-creds <credential>`.
+    get() reads the file <credential> in the folder $CREDENTIALS_DIRECTORY of the unit.
+    set() encrypts the value with `systemd-creds encrypt` into ENCRYPTED/<credential>.cred:
+    the key of the host and the TPM, without a PCR binding. Only root can do this.
+    Thus the provider is never automatic.
+    """
+
+    name = "systemd-creds"
+    automatic = False
+    ENCRYPTED = Path("/etc/credstore.encrypted")
+    WITH_KEY = "host+tpm2"
+
+    def __init__(self, credential: str | None = None, environ: Mapping[str, str] | None = None,
+                 encrypted: Path | None = None,
+                 run: Callable[[list[str], bytes], int] | None = None) -> None:
+        self.credential = _check_name(credential, "credential") if credential is not None else None
+        self._environ = environ
+        self._encrypted = encrypted
+        self._run = run or _run_with_input
+
+    def _folder(self) -> Path | None:
+        """$CREDENTIALS_DIRECTORY. Read at each call: PROVIDERS is made at the import."""
+        import os
+        value = (os.environ if self._environ is None else self._environ).get("CREDENTIALS_DIRECTORY")
+        return Path(value) if value else None
+
+    def available(self) -> bool:
+        folder = self._folder()
+        return folder is not None and folder.is_dir()
+
+    def line(self) -> str:
+        if self.credential is None:
+            raise CredentialError("the systemd-creds provider needs a credential name to write a key file")
+        return f"{self.name} {self.credential}"
+
+    def key_passphrase(self, recipient: str, argument: str) -> str | None:
+        if not argument:
+            raise CredentialError("the provider line of systemd-creds must name the credential")
+        return self.get(argument)
+
+    def get(self, name: str) -> str | None:
+        """The credential `name` of the unit, without the line break at the end, or None."""
+        folder = self._folder()
+        if folder is None:
+            return None
+        try:
+            value = (folder / _check_name(name, "credential")).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except (OSError, UnicodeDecodeError) as exc:
+            raise CredentialError(f"the credential {name!r} cannot be read") from exc
+        return value.rstrip("\r\n") or None
+
+    def set(self, name: str, value: str) -> None:
+        """Encrypt `value` into ENCRYPTED/<credential>.cred. `name` is the recipient: it is not used."""
+        if self.credential is None:
+            raise CredentialError("the systemd-creds provider needs a credential name to store a key passphrase")
+        folder = self._encrypted or self.ENCRYPTED
+        target = folder / f"{self.credential}.cred"
+        if target.exists():
+            raise CredentialError(f"{target} exists already: delete it first")
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        code = self._run(["systemd-creds", "encrypt", f"--with-key={self.WITH_KEY}", "--tpm2-pcrs=",
+                          f"--name={self.credential}", "-", str(target)], value.encode())
+        if code != 0:
+            target.unlink(missing_ok=True)
+            raise CredentialError(f"systemd-creds encrypt failed with exit code {code}")
+        target.chmod(0o600)
+
+    def delete(self, name: str) -> None:
+        raise CredentialError("the systemd-creds provider cannot delete a credential: "
+                              f"as root, delete {(self._encrypted or self.ENCRYPTED)}/<credential>.cred")
+
+    def list(self) -> list[str]:
+        """No entries: the credentials of a unit are not key passphrases of this tool by name."""
+        return []
+
+
+def _run_with_input(argv: list[str], data: bytes) -> int:
+    """Run `argv` with `data` on stdin. The output is not shown: it can hold no secret, but it is not needed."""
+    try:
+        return subprocess.run(argv, input=data, capture_output=True, timeout=60).returncode
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CredentialError(f"{argv[0]} cannot run: {exc}") from exc
+
+
+PROVIDERS: list[Provider] = [KeyringProvider(), SystemdCredsProvider()]   # tried in this sequence
 
 
 def available_providers() -> list[Provider]:
     return [p for p in PROVIDERS if p.available()]
+
+
+def automatic_providers() -> list[Provider]:
+    """The available providers that enrol can select without a provider argument."""
+    return [p for p in available_providers() if p.automatic]
 
 
 def _provider(name: str) -> Provider | None:
@@ -573,10 +679,18 @@ def _provider(name: str) -> Provider | None:
 
 # -- key files --------------------------------------------------------------------------
 
+def _provider_line(first: bytes) -> tuple[str, str] | None:
+    """(provider name, argument) of the first line of a key file, or None for a plain key."""
+    if not first.startswith(PROVIDER_LINE.encode()):
+        return None
+    name, _, argument = first[len(PROVIDER_LINE):].strip().decode().partition(" ")
+    return name, argument.strip()
+
+
 def _key_provider(path: Path) -> str | None:
     """The provider that a key file names in its first line, or None for a plain key."""
-    first = path.read_bytes().partition(b"\n")[0]
-    return first[len(PROVIDER_LINE):].strip().decode() if first.startswith(PROVIDER_LINE.encode()) else None
+    found = _provider_line(path.read_bytes().partition(b"\n")[0])
+    return found[0] if found else None
 
 
 def _read_private(path: Path, name: str) -> tuple[rsa.RSAPrivateKey, str]:
@@ -584,12 +698,13 @@ def _read_private(path: Path, name: str) -> tuple[rsa.RSAPrivateKey, str]:
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
     data, password, how = path.read_bytes(), None, "plain"
     first, _, rest = data.partition(b"\n")
-    if first.startswith(PROVIDER_LINE.encode()):
-        how = first[len(PROVIDER_LINE):].strip().decode()
+    found = _provider_line(first)
+    if found is not None:
+        how, argument = found
         provider = _provider(how)
         if provider is None or not provider.available():
             raise CredentialError(f"provider {how!r} is not available")
-        value = provider.get(name)
+        value = provider.key_passphrase(name, argument)
         if not value:
             raise CredentialError(f"provider {how!r} has no key passphrase for {name!r}")
         data, password = rest, value.encode()
@@ -609,8 +724,9 @@ def _write_private(path: Path, name: str, private: rsa.RSAPrivateKey, provider: 
         data = private.private_bytes(s.Encoding.PEM, s.PrivateFormat.PKCS8, s.NoEncryption())
     else:
         value = b64encode(token_bytes(32)).decode()
+        line = provider.line()
         provider.set(name, value)
-        data = f"{PROVIDER_LINE} {provider.name}\n".encode() + private.private_bytes(
+        data = f"{PROVIDER_LINE} {line}\n".encode() + private.private_bytes(
             s.Encoding.PEM, s.PrivateFormat.PKCS8, s.BestAvailableEncryption(value.encode()))
     tmp = path.with_name(path.name + ".tmp")
     tmp.unlink(missing_ok=True)
@@ -766,14 +882,18 @@ class Store:
     """The vault of `vault_home`.
 
     `passphrase` opens the vault when no clone key does. `interactive` lets the CLI ask
-    for it in a terminal.
+    for it in a terminal. `recipient` selects the one clone key that the store uses: the other
+    key files of the vault home are ignored. `access_log=False` writes no access log, e.g. for
+    a service that writes its own audit log or reads a read-only vault home.
     """
 
     def __init__(self, vault_home: Path | str, passphrase: str | None = None,
-                 interactive: bool = False):
+                 interactive: bool = False, recipient: str | None = None, access_log: bool = True):
         if not vault_home:
             raise CredentialError("give the vault home")
         self.home = Path(vault_home)
+        self.recipient = _check_name(recipient, "recipient") if recipient is not None else None
+        self.access_log = access_log       # False: write no line into access.log
         self.vault = self.home / "vault.json"
         self.admin_pub = self.home / "admin.pub"
         self.admin_enc = self.home / "admin.enc.key"
@@ -795,7 +915,20 @@ class Store:
         return self._passphrase
 
     def _key_files(self) -> list[tuple[str, Path]]:
-        return [(p.name[len("clone."):-len(".key")], p) for p in sorted(self.home.glob("clone.*.key"))]
+        found = [(p.name[len("clone."):-len(".key")], p) for p in sorted(self.home.glob("clone.*.key"))]
+        return [(n, p) for n, p in found if self.recipient is None or n == self.recipient]
+
+    def _access_log(self, event: str, system: str = "", secrets: Iterable[str] = (), method: str = "") -> None:
+        if self.access_log:
+            _log(self.home, event, system, secrets, method)
+
+    def open(self) -> None:
+        """Load the master key and vault.json now, not at the first read. The error names the vault home."""
+        self._open()
+
+    def entry_id(self, system: str) -> str:
+        """The entry ID of `system`. It does not tell if the system exists."""
+        return self._id(system)
 
     def _load_key(self, log_failure: bool = True) -> str:
         """The master key: from the first clone key that opens it, else from the passphrase."""
@@ -838,7 +971,7 @@ class Store:
             return self._key
         except CredentialError as exc:
             if log_failure:
-                _log(self.home, "open-failed", method=tried)
+                self._access_log("open-failed", method=tried)
             if skipped:
                 raise type(exc)(f"{exc}. Skipped keys: {'; '.join(skipped)}") from exc
             raise
@@ -950,7 +1083,7 @@ class Store:
         if eid is None:
             return None
         name = self._name_of(_admin_key(self._admin_pem(self._confirm_passphrase())), eid, entries[eid])
-        _log(self.home, "get-system", eid, method=self.method)
+        self._access_log("get-system", eid, method=self.method)
         return name
 
     # -- wrapping and backups --------------------------------------------------------------
@@ -1043,7 +1176,7 @@ class Store:
             self._put(c, name_blob)
         self._save()
         self._wrap_all(self._load_key())
-        _log(self.home, "rotate-master-key", method=self.method)
+        self._access_log("rotate-master-key", method=self.method)
         return backup
 
     def change_passphrase(self, new: str) -> Path:
@@ -1053,7 +1186,7 @@ class Store:
         backup = self._backup("change-passphrase")
         self._new_key(new, key=self._key)
         _write(self.admin_enc, encrypt(admin_pem, new))
-        _log(self.home, "change-passphrase", method=self.method)
+        self._access_log("change-passphrase", method=self.method)
         return backup
 
     # -- recipients -----------------------------------------------------------------------
@@ -1079,7 +1212,7 @@ class Store:
             private, _ = _read_private(path, name)
         else:
             if provider == "auto":
-                provider = next(iter(available_providers()), None)
+                provider = next(iter(automatic_providers()), None)
             private = rsa.generate_private_key(public_exponent=65537, key_size=KEY_BITS)
             self.home.mkdir(parents=True, exist_ok=True)
             _write_private(path, name, private, provider if isinstance(provider, Provider) else None)
@@ -1101,7 +1234,7 @@ class Store:
             if key:
                 self._wrap(name, key)
                 approved = True
-        _log(self.home, "enrol", name, method=self.method if approved else "")
+        self._access_log("enrol", name, method=self.method if approved else "")
         return name, fingerprint(public), approved
 
     def approve_enrol(self, name: str) -> str:
@@ -1110,7 +1243,7 @@ class Store:
         if not pub.is_file():
             raise CredentialError(f"no request for {name!r}: {pub} does not exist")
         self._wrap(name, self._load_key())
-        _log(self.home, "approve-enrol", name, method=self.method)
+        self._access_log("approve-enrol", name, method=self.method)
         return fingerprint(pub.read_bytes())
 
     def _warn_if_moved(self, name: str) -> None:
@@ -1151,7 +1284,7 @@ class Store:
         now = f"{datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}"
         _write_info(path, {"name": name, "created": created, "updated": now,
                            "fingerprint": fingerprint(pub.read_bytes()), **_clone_info(self.home)})
-        _log(self.home, "refresh-inf", name)
+        self._access_log("refresh-inf", name)
         return path
 
     def recipients_list(self) -> list[Recipient]:
@@ -1197,7 +1330,7 @@ class Store:
             raise CredentialError(f"unknown recipient {name!r} in {self.recipients}")
         for p in files:
             p.unlink(missing_ok=True)
-        _log(self.home, "unenrol", name)
+        self._access_log("unenrol", name)
         return name
 
     def _pushed_files(self, files: list[Path]) -> list[str]:
@@ -1227,7 +1360,7 @@ class Store:
         if provider is not None and provider.available():
             provider.delete(name)
         path.unlink()
-        _log(self.home, "delete-private-clone-key", name, method=provider.name if provider else "plain")
+        self._access_log("delete-private-clone-key", name, method=provider.name if provider else "plain")
         return name
 
     def unenrol_and_rotate_master_key(self, name: str) -> Path:
@@ -1241,7 +1374,7 @@ class Store:
         for p in files:
             p.unlink(missing_ok=True)
         self.rotate_master_key(backup)
-        _log(self.home, "unenrol-and-rotate-master-key", name, method=self.method)
+        self._access_log("unenrol-and-rotate-master-key", name, method=self.method)
         return backup
 
     def list_keyring_secrets(self) -> list[tuple[str, str]]:
@@ -1259,7 +1392,7 @@ class Store:
                 path = self.home / f"clone.{name}.key"
                 if path.is_file() and _key_provider(path) == p.name:
                     path.unlink()   # it cannot open any more
-                _log(self.home, "delete-keyring-secret", name, method=p.name)
+                self._access_log("delete-keyring-secret", name, method=p.name)
         return removed
 
     def delete_keyring_secrets(self, names: list[str]) -> list[tuple[str, str]]:
@@ -1278,7 +1411,7 @@ class Store:
     def list_systems(self) -> list[str]:
         """The names of all systems, sorted. Needs the passphrase: only the admin key opens the names."""
         names = self._names(_admin_key(self._admin_pem(self._confirm_passphrase())))
-        _log(self.home, "list-systems", method=self.method)
+        self._access_log("list-systems", method=self.method)
         return sorted(names.values())
 
     def get_system(self, system: str) -> Credential:
@@ -1291,7 +1424,7 @@ class Store:
     def get_credential(self, system: str) -> Credential:
         """A system with all its secrets. Logs each secret."""
         c = self._need(system)
-        _log(self.home, "get", self._id(system), list(c.secrets()), self.method)
+        self._access_log("get", self._id(system), list(c.secrets()), self.method)
         return c
 
     def get_secret(self, system: str, key: str) -> str:
@@ -1300,7 +1433,7 @@ class Store:
         if key not in c.secrets():
             raise CredentialError(f"no secret {key!r} in system {system!r} "
                                   f"(known: {', '.join(c.secrets()) or 'none'})")
-        _log(self.home, "get", self._id(system), [key], self.method)
+        self._access_log("get", self._id(system), [key], self.method)
         return c.secrets()[key]
 
     def edit_path(self, system: str) -> Path:
@@ -1408,7 +1541,7 @@ class Store:
         eid = self._id(system)
         self._drop(system)
         self._save()
-        _log(self.home, "delete-system", eid, method=self.method)
+        self._access_log("delete-system", eid, method=self.method)
 
     def rename_system(self, system: str, new: str) -> None:
         """Rename a system, keeping the stored values. The entry gets a new ID."""
@@ -1455,8 +1588,8 @@ class Store:
         if event == "move-system":
             self._drop(system)
             self._save()
-        _log(self.home, event, eid, list(c.secrets()), self.method)
-        _log(target.home, event, target._id(system), list(c.secrets()), target.method)
+        self._access_log(event, eid, list(c.secrets()), self.method)
+        target._access_log(event, target._id(system), list(c.secrets()), target.method)
         return c
 
     def rename_secret(self, system: str, old: str, new: str) -> None:
@@ -1651,7 +1784,7 @@ def _enrol_cli(store: Store, name: str | None) -> None:
         for p, n in store.list_keyring_secrets():
             if _yes(f"Delete the key passphrase of {n!r} in {p} (its key file stops working)?", False):
                 store.delete_keyring_secrets([n])
-        found = available_providers()
+        found = automatic_providers()
         provider = found[0] if found and _yes(f"Keep the key passphrase in {found[0].name}?", True) else None
         store.prompt = "Master passphrase (empty: leave a request): "
     name, fp, approved = store.enrol(name, provider)

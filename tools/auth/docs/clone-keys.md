@@ -42,7 +42,8 @@ Each clone opens the vault with its own key pair. Do not copy the master key to 
 
 - The private key is always a file on the disk. A provider holds only the key passphrase.
 - A plain key file is a PKCS#8 PEM. It has no other lines.
-- An encrypted key file is an encrypted PKCS#8 PEM. Its first line is `credstore-provider: <provider>`.
+- An encrypted key file is an encrypted PKCS#8 PEM. Its first line is `credstore-provider: <provider>`,
+  or `credstore-provider: <provider> <argument>`.
   The tool removes this line before it reads the key.
 - A key passphrase is 256 random bits, in base64.
 - The tool sets mode 600 on each key file.
@@ -246,8 +247,10 @@ A provider stores key passphrases by recipient name. Each provider has these ope
 | delete NAME | Deletes the key passphrase of `NAME`. |
 | list | Gives all names of this tool. |
 
-- The tool tries providers in a fixed sequence. Now there is one provider: `keyring`.
+- The tool tries providers in a fixed sequence: `keyring`, then `systemd-creds`.
 - A key file names its provider. Thus the tool asks only that provider for that key.
+- The provider line can give an argument after the provider name. Only `systemd-creds` uses one.
+- `enrol` without a provider uses only an automatic provider. `systemd-creds` is not automatic.
 - Later providers can be network services. A new provider is a new implementation of the
   operations. Nothing else changes.
 
@@ -270,6 +273,27 @@ A provider stores key passphrases by recipient name. Each provider has these ope
 | WSL | No Secret Service by default. The key file is plain. |
 | Windows | Credential Manager. No prompt. |
 | Cloud | No keyring. The key file is plain. |
+
+### The systemd-creds provider
+
+A system service, e.g. `vaultkeeper` of the project `gustaw_vaultkeeper`, uses this provider.
+
+- Provider line: `credstore-provider: systemd-creds <credential name>`.
+- get: read the file `$CREDENTIALS_DIRECTORY/<credential name>`. systemd decrypts it for the unit
+  with `LoadCredentialEncrypted=`.
+- Available: `$CREDENTIALS_DIRECTORY` is a folder, thus only in a unit with credentials.
+- set: encrypt the key passphrase with `systemd-creds encrypt --with-key=host+tpm2 --tpm2-pcrs=`
+  into `/etc/credstore.encrypted/<credential name>.cred`, mode `0600`. Only root can do this.
+  The provider does not replace a file that exists.
+- delete: not possible. As root, delete the `.cred` file.
+- list: no entries.
+
+### Store parameters for a service
+
+- `recipient=<name>`: use only `clone.<name>.key`. Ignore the other key files of the vault home.
+  Thus `enrol` with this parameter never opens the vault with another key: it makes a request.
+- `access_log=False`: write no line into `access.log`. Use it for a read-only vault home or for a
+  service with its own audit log.
 
 ## Access log
 

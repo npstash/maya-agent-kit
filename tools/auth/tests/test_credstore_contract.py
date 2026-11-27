@@ -4,6 +4,7 @@ A change of the real behaviour fails here until the fake has the same change (ru
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -70,6 +71,26 @@ def test_the_module_function_gives_the_same_system(vault: Vault) -> None:
     assert vault.module.get_credential(SYSTEM, vault.home, vault.passphrase) == vault.store().get_credential(SYSTEM)
 
 
+def test_open_loads_an_existing_vault(vault: Vault) -> None:
+    vault.store().set_system(SYSTEM, secrets={"token": "t"})
+    store = vault.store()
+    store.open()
+    assert dict(store.get_credential(SYSTEM).secrets()) == {"token": "t"}
+
+
+def test_the_entry_id_is_stable_and_does_not_tell_if_the_system_exists(vault: Vault) -> None:
+    vault.store().set_system(SYSTEM, secrets={"token": "t"})
+    known, unknown = vault.store().entry_id(SYSTEM), vault.store().entry_id("Other 01")
+    assert re.fullmatch(r"[0-9a-f]{32}", known) and re.fullmatch(r"[0-9a-f]{32}", unknown)
+    assert known == vault.store().entry_id(SYSTEM) != unknown
+
+
+def test_the_store_parameters_keep_the_read_side(vault: Vault) -> None:
+    vault.store().set_system(SYSTEM, secrets={"token": "t"})
+    store = vault.module.Store(vault.home, vault.passphrase, access_log=False)
+    assert dict(store.get_credential(SYSTEM).secrets()) == {"token": "t"}
+
+
 def test_a_change_keeps_the_values_that_it_does_not_give(vault: Vault) -> None:
     vault.store().set_system(SYSTEM, url="https://example.com", secrets={"username": "u", "token": "t"})
     vault.store().set_system(SYSTEM, secrets={"token": "new"})
@@ -82,7 +103,7 @@ def test_the_fake_has_the_signatures_of_the_real_api() -> None:
     import inspect
     for name in ("get_credential",):
         assert inspect.signature(getattr(credstore_fake, name)) == inspect.signature(getattr(credstore, name))
-    for method in ("__init__", "get_credential", "set_system"):
+    for method in ("__init__", "get_credential", "set_system", "open", "entry_id"):
         fake = inspect.signature(getattr(credstore_fake.Store, method))
         real = inspect.signature(getattr(credstore.Store, method))
         assert list(fake.parameters) == list(real.parameters), method

@@ -1,6 +1,9 @@
-"""Tests of secrets_proxy: the selection of the provider, the vault provider and the environment provider."""
+"""Tests of secrets_proxy: the selection of the provider, the vault, vaultkeeper and environment providers."""
 from __future__ import annotations
 
+import json
+import socket
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -8,7 +11,7 @@ import pytest
 
 import credstore_fake
 import secrets_proxy
-from secrets_proxy import EnvSecrets, SecretError, VaultSecrets, open_secrets, parse_refs
+from secrets_proxy import EnvSecrets, SecretError, VaultkeeperSecrets, VaultSecrets, open_secrets, parse_refs
 
 TOOL_DIR = Path(__file__).resolve().parent.parent
 
@@ -120,3 +123,102 @@ def test_parse_refs_refuses_a_bad_section() -> None:
         parse_refs(["a"])
     with pytest.raises(SecretError):
         parse_refs({"a": {"env": ""}})
+
+
+class FakeVaultkeeper:
+    """A vaultkeeper on a Unix socket: it answers each JSON line with the response of `answer`."""
+
+    def __init__(self, path: Path, systems: Mapping[str, Mapping[str, str]], raw: bytes | None = None) -> None:
+        self.requests: list[object] = []
+        self._systems = systems
+        self._raw = raw
+        self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._server.bind(str(path))
+        self._server.listen(1)
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        conn, _ = self._server.accept()
+        with conn, conn.makefile("rb") as lines:
+            for line in lines:
+                request = json.loads(line)
+                self.requests.append(request)
+                if self._raw is not None:
+                    conn.sendall(self._raw)
+                    continue
+                found = self._systems.get(request["system"]) if request.get("vault") == "vault-svc" else None
+                response: dict[str, object] = (
+                    {"ok": True, "result": {"url": None, "authority_info": [], "secrets": dict(found)}}
+                    if found is not None else {"ok": False, "error": "not-granted"})
+                conn.sendall(json.dumps(response).encode() + b"\n")
+
+    def close(self) -> None:
+        self._server.close()
+        self._thread.join(timeout=5)
+
+
+@pytest.fixture
+def short_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A Unix socket path has at most 107 bytes: the tests use a relative path in tmp_path."""
+    monkeypatch.chdir(tmp_path)
+    return Path("vk.sock")
+
+
+def test_vaultkeeper_provider_gets_each_entry_once(short_dir: Path) -> None:
+    keeper = FakeVaultkeeper(short_dir, {"API 01": {"token": "t5"}, "DB 01": {"password": "p5"}})
+    refs = parse_refs({**SECRETS, "api_user": {"entry": "API 01", "key": "token"}})
+    secrets = VaultkeeperSecrets(refs, "vault-svc", short_dir)
+    keeper.close()
+    assert secrets.get_secret("api_token") == "t5" and secrets.get_secret("api_user") == "t5"
+    assert secrets.get_secret("db_password") == "p5"
+    assert keeper.requests == [{"op": "get", "vault": "vault-svc", "system": "API 01"},
+                               {"op": "get", "vault": "vault-svc", "system": "DB 01"}]
+
+
+def test_vaultkeeper_provider_refusal_is_an_error(short_dir: Path) -> None:
+    keeper = FakeVaultkeeper(short_dir, {"API 01": {"token": "t5"}})
+    with pytest.raises(SecretError, match="vaultkeeper refused vault entry 'DB 01': not-granted"):
+        VaultkeeperSecrets(parse_refs(SECRETS), "vault-svc", short_dir)
+    keeper.close()
+
+
+def test_vaultkeeper_provider_missing_key_is_an_error(short_dir: Path) -> None:
+    keeper = FakeVaultkeeper(short_dir, {"API 01": {"other": "x"}, "DB 01": {"password": "p5"}})
+    with pytest.raises(SecretError, match="has no value for 'token'"):
+        VaultkeeperSecrets(parse_refs(SECRETS), "vault-svc", short_dir)
+    keeper.close()
+
+
+def test_vaultkeeper_provider_refuses_a_bad_response(short_dir: Path) -> None:
+    keeper = FakeVaultkeeper(short_dir, {}, raw=b"not json\n")
+    with pytest.raises(SecretError, match="not JSON"):
+        VaultkeeperSecrets(parse_refs(SECRETS), "vault-svc", short_dir)
+    keeper.close()
+
+
+def test_vaultkeeper_provider_without_a_daemon_is_an_error(short_dir: Path) -> None:
+    with pytest.raises(SecretError, match="cannot be used"):
+        VaultkeeperSecrets(parse_refs(SECRETS), "vault-svc", short_dir)
+
+
+def test_open_secrets_with_vaultkeeper_uses_no_vault_tool(short_dir: Path) -> None:
+    keeper = FakeVaultkeeper(short_dir, {"API 01": {"token": "t6"}, "DB 01": {"password": "p6"}})
+
+    def find(name: str) -> Path:
+        raise AssertionError(f"no lookup expected: {name}")
+
+    secrets = open_secrets({"vault": "vault-svc", "vaultkeeper": str(short_dir), "secrets": SECRETS}, find, {})
+    keeper.close()
+    assert isinstance(secrets, VaultkeeperSecrets)
+    assert secrets.get_secret("db_password") == "p6"
+
+
+def test_open_secrets_vaultkeeper_needs_a_vault() -> None:
+    def find(name: str) -> Path:
+        raise AssertionError(f"no lookup expected: {name}")
+
+    with pytest.raises(SecretError, match="needs credentials.vault"):
+        open_secrets({"vaultkeeper": "/run/gustaw/vaultkeeper.sock", "secrets": SECRETS}, find, {})
+    with pytest.raises(SecretError, match="socket path"):
+        open_secrets({"vault": "vault-svc", "vaultkeeper": 1, "secrets": SECRETS}, find, {})
